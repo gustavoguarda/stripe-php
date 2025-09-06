@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Embedded Onboarding (Stripe Connect)</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root {
+        --border: #e5e7eb;
+        --muted: #6b7280;
+      }
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 24px;
+      }
+      .card {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 20px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      label {
+        width: 160px;
+        color: var(--muted);
+      }
+      input {
+        flex: 1;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+      button {
+        padding: 10px 14px;
+        border: 0;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #111827;
+        color: white;
+      }
+      button.secondary {
+        background: #f3f4f6;
+      }
+      #onboarding {
+        margin-top: 20px;
+      }
+      #status,
+      #accountJson {
+        margin-top: 12px;
+      }
+      pre {
+        background: #0b1020;
+        color: #e5e7eb;
+        padding: 12px;
+        border-radius: 10px;
+        overflow: auto;
+        max-height: 360px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #f3f4f6;
+        font-size: 12px;
+      }
+      .small {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .spacer {
+        height: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Embedded Onboarding</h2>
+      <p class="small">
+        Crie ou reutilize uma Connected Account e carregue o formulário de
+        onboarding diretamente nesta página.
+      </p>
+
+      <div class="row">
+        <label>Email do Expert</label>
+        <input id="email" placeholder="expert+t1@example.com" />
+      </div>
+      <div class="row">
+        <label>Account ID (opcional)</label>
+        <input id="accountId" placeholder="acct_..." />
+        <button class="secondary" id="copyAcct">copiar</button>
+      </div>
+      <div class="row">
+        <button class="primary" id="start">Iniciar Onboarding</button>
+        <button class="secondary" id="check">Ver status da conta</button>
+      </div>
+
+      <div id="status"></div>
+      <div id="onboarding"></div>
+
+      <div class="spacer"></div>
+      <div id="accountJson"></div>
+    </div>
+
+    <script src="https://js.stripe.com/v3/"></script>
+    <script>
+      // Use sua publishable key de TESTE do .env (exposta pelo PHP)
+      const stripe = Stripe(
+        "<?php echo htmlspecialchars(getenv('STRIPE_PUBLISHABLE_KEY') ?? 'pk_test_xxx', ENT_QUOTES); ?>"
+      );
+
+      const $email = document.getElementById("email");
+      const $accountId = document.getElementById("accountId");
+      const $status = document.getElementById("status");
+      const $accountJson = document.getElementById("accountJson");
+      const $start = document.getElementById("start");
+      const $check = document.getElementById("check");
+      const $copyAcct = document.getElementById("copyAcct");
+
+      function setStatus(text) {
+        $status.innerHTML = `<span class="pill">Status</span> <span class="small">${text}</span>`;
+      }
+      function showAccountJson(obj) {
+        $accountJson.innerHTML = `<div class="pill">account_status</div><pre>${JSON.stringify(
+          obj,
+          null,
+          2
+        )}</pre>`;
+      }
+
+      async function createAccountSession() {
+        const body = {};
+        if ($accountId.value.trim()) body.account_id = $accountId.value.trim();
+        if ($email.value.trim()) body.email = $email.value.trim();
+
+        const res = await fetch("./create_account_session.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!data.success)
+          throw new Error(data.error || "Falha ao criar Account Session");
+        return data;
+      }
+
+      async function fetchAccountStatus(acct) {
+        const res = await fetch("./account_status.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account_id: acct }),
+        });
+        const data = await res.json();
+        if (!data.success)
+          throw new Error(data.error || "Falha ao consultar status");
+        return data;
+      }
+
+      $start.addEventListener("click", async () => {
+        try {
+          setStatus("criando account session…");
+          const data = await createAccountSession();
+          $accountId.value = data.account_id;
+          setStatus(`Conta: ${data.account_id} — montando componente…`);
+
+          // Monta o componente de onboarding com o client_secret retornado
+          const connectOnboarding = stripe.connectOnboarding({
+            clientSecret: data.client_secret,
+            onReady: () =>
+              setStatus(`Conta: ${data.account_id} — pronto para preencher.`),
+            onExit: (ev) => console.log("onboarding exit", ev),
+            onComplete: async (ev) => {
+              setStatus("Onboarding concluído. Verificando status no backend…");
+              try {
+                const st = await fetchAccountStatus(data.account_id);
+                setStatus("Onboarding concluído. Status atualizado abaixo.");
+                showAccountJson(st);
+              } catch (e) {
+                setStatus(
+                  "Onboarding concluído, mas falhou ao consultar status: " +
+                    e.message
+                );
+              }
+            },
+          });
+
+          connectOnboarding.mount("#onboarding");
+        } catch (e) {
+          setStatus("Erro: " + e.message);
+        }
+      });
+
+      $check.addEventListener("click", async () => {
+        const acct = $accountId.value.trim();
+        if (!acct) {
+          setStatus("Informe um Account ID (acct_...).");
+          return;
+        }
+        try {
+          setStatus("consultando status…");
+          const st = await fetchAccountStatus(acct);
+          setStatus("Status carregado abaixo.");
+          showAccountJson(st);
+        } catch (e) {
+          setStatus("Erro ao consultar status: " + e.message);
+        }
+      });
+
+      $copyAcct.addEventListener("click", async () => {
+        const v = $accountId.value.trim();
+        if (!v) return;
+        try {
+          await navigator.clipboard.writeText(v);
+          setStatus("Account ID copiado.");
+        } catch {
+          setStatus("Não foi possível copiar.");
+        }
+      });
+    </script>
+  </body>
+</html>
