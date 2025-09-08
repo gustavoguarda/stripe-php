@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Teste de Transferência - Stripe Connect</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        :root {
+            --border: #e5e7eb;
+            --muted: #6b7280;
+            --success: #10b981;
+            --error: #ef4444;
+        }
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            margin: 24px;
+        }
+        .card {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        label {
+            width: 120px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+        input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        button {
+            padding: 10px 16px;
+            border: 0;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        button.primary {
+            background: #111827;
+            color: white;
+        }
+        button.primary:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .result.success {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+        }
+        .result.error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+        }
+        .status {
+            margin-top: 12px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .status.loading {
+            background: #f3f4f6;
+            color: var(--muted);
+        }
+        .status.success {
+            background: #f0fdf4;
+            color: var(--success);
+        }
+        .status.error {
+            background: #fef2f2;
+            color: var(--error);
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Teste de Transferência</h2>
+        <p style="color: var(--muted); font-size: 14px; margin-bottom: 20px;">
+            Simule transferências para a conta conectada usando tokens de teste do Stripe. Use valores pequenos para teste.
+        </p>
+
+        <div class="row">
+            <label>Account ID</label>
+            <input id="accountId" placeholder="acct_..." value="acct_1S47fHJGQmCPrnRh" />
+        </div>
+
+        <div class="row">
+            <label>Valor (R$)</label>
+            <input id="amount" type="number" step="0.01" min="0.50" placeholder="10.00" value="1.00" />
+        </div>
+
+        <div class="row">
+            <label>Email Cliente</label>
+            <input id="customerEmail" type="email" placeholder="cliente@example.com" value="expert+t1@example.com" disabled />
+            <small style="color: var(--muted); font-size: 12px;">(Simulação - não usado)</small>
+        </div>
+
+        <div class="row">
+            <label>Referência</label>
+            <input id="orderRef" placeholder="TEST-123" value="TEST-ONBOARDING" />
+        </div>
+
+        <div class="row">
+            <button class="primary" id="transferBtn">Transferir</button>
+        </div>
+
+        <div id="status"></div>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const $accountId = document.getElementById('accountId');
+        const $amount = document.getElementById('amount');
+        const $customerEmail = document.getElementById('customerEmail');
+        const $orderRef = document.getElementById('orderRef');
+        const $transferBtn = document.getElementById('transferBtn');
+        const $status = document.getElementById('status');
+        const $result = document.getElementById('result');
+
+        function setStatus(text, type = 'loading') {
+            $status.innerHTML = `<div class="status ${type}">${text}</div>`;
+        }
+
+        function showResult(data, isError = false) {
+            $result.innerHTML = `<div class="result ${isError ? 'error' : 'success'}">${JSON.stringify(data, null, 2)}</div>`;
+        }
+
+        async function makeTransfer() {
+            const accountId = $accountId.value.trim();
+            const amount = parseFloat($amount.value);
+            const customerEmail = $customerEmail.value.trim();
+            const orderRef = $orderRef.value.trim();
+
+            if (!accountId) {
+                setStatus('Informe o Account ID', 'error');
+                return;
+            }
+
+            if (!amount || amount < 0.50) {
+                setStatus('Valor deve ser pelo menos R$ 0,50', 'error');
+                return;
+            }
+
+            if (!customerEmail) {
+                setStatus('Informe o email do cliente', 'error');
+                return;
+            }
+
+            $transferBtn.disabled = true;
+            setStatus('Simulando pagamento e transferência...', 'loading');
+
+            try {
+                const response = await fetch('./simulate_transfer.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        account_id: accountId,
+                        amount_brl: amount,
+                        customer_email: customerEmail,
+                        order_ref: orderRef || null,
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    setStatus(`✅ Simulação concluída! Transfer: ${data.data.transfer_id}`, 'success');
+                    showResult(data);
+                } else {
+                    setStatus(`Erro: ${data.error}`, 'error');
+                    showResult(data, true);
+                }
+            } catch (error) {
+                setStatus(`Erro de rede: ${error.message}`, 'error');
+                showResult({ error: error.message }, true);
+            } finally {
+                $transferBtn.disabled = false;
+            }
+        }
+
+        $transferBtn.addEventListener('click', makeTransfer);
+
+        // Enter key support
+        document.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                makeTransfer();
+            }
+        });
+    </script>
+</body>
+</html>

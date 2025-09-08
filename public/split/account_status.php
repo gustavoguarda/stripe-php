@@ -1,8 +1,30 @@
 <?php
+declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../../config.php';
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+
+function successResponse(array $data): void {
+    http_response_code(200);
+    echo json_encode([
+        'success' => true,
+        'data' => $data,
+        'timestamp' => date('c'),
+    ], JSON_UNESCAPED_UNICODE);
+}
+
+function errorResponse(string $message, int $code = 400, array $details = null): void {
+    http_response_code($code);
+    echo json_encode([
+        'success' => false,
+        'error' => $message,
+        'details' => $details,
+        'timestamp' => date('c'),
+    ], JSON_UNESCAPED_UNICODE);
+}
 
 try {
     \Stripe\Stripe::setApiKey(getenv('STRIPE_SECRET_KEY'));
@@ -11,22 +33,14 @@ try {
     $accountId = $payload['account_id'] ?? null;
 
     if (!$accountId) {
-        http_response_code(400);
-        echo json_encode(['error' => 'account_id é obrigatório']);
-        exit;
+        return errorResponse('account_id é obrigatório', 400);
     }
 
-    // Busca os detalhes da conta
     $account = \Stripe\Account::retrieve($accountId);
 
-    echo json_encode([
-        'success' => true,
-        'account' => $account
-    ]);
+    return successResponse(['account' => $account]);
 } catch (\Stripe\Exception\ApiErrorException $e) {
-    http_response_code(400);
-    echo json_encode(['error' => $e->getMessage()]);
+    return errorResponse('Stripe API error', 400, ['message' => $e->getMessage()]);
 } catch (\Throwable $t) {
-    http_response_code(500);
-    echo json_encode(['error' => $t->getMessage()]);
+    return errorResponse('Internal server error', 500, ['message' => $t->getMessage()]);
 }

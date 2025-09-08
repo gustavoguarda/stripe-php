@@ -90,26 +90,25 @@
   </head>
   <body>
     <div class="card">
-      <h2>Embedded Onboarding</h2>
+      <h2>Stripe Connect Onboarding</h2>
       <p class="small">
-        Crie ou reutilize uma Connected Account e carregue o formulário de
-        onboarding diretamente nesta página.
+        Crie uma nova Connected Account (redirecionamento direto para onboarding da Stripe) ou 
+        reutilize uma conta existente (onboarding embarcado nesta página).
       </p>
 
       <div class="row">
         <label>Email do Expert</label>
-        <input id="email" placeholder="expert+t1@example.com" />
+        <input id="email" placeholder="expert+t1@example.com" value="expert+t14@example.com" />
       </div>
-      <div class="row">
-        <label>Account ID (opcional)</label>
-        <input id="accountId" placeholder="acct_..." />
-        <button class="secondary" id="copyAcct">copiar</button>
-      </div>
+        <div class="row">
+          <label>Account ID (opcional)</label>
+          <input id="accountId" placeholder="acct_..." />
+          <button class="secondary" id="copyAcct">copiar</button>
+        </div>
 
       <div class="row group">
         <button class="primary" id="start">Iniciar Onboarding</button>
         <button class="secondary" id="check">Ver status da conta</button>
-        <button class="secondary" id="prefill">Pré-preencher conta (PF)</button>
         <button class="secondary" id="reopen">Reabrir Onboarding</button>
       </div>
 
@@ -120,7 +119,7 @@
       <div id="accountJson"></div>
     </div>
 
-    <!-- Stripe.js (inclui funcionalidades do Connect) -->
+    <!-- Stripe.js -->
     <script src="https://js.stripe.com/v3/"></script>
 
     <script>
@@ -139,7 +138,6 @@
 
       const $start = document.getElementById("start");
       const $check = document.getElementById("check");
-      const $prefill = document.getElementById("prefill");
       const $reopen = document.getElementById("reopen");
       const $copyAcct = document.getElementById("copyAcct");
 
@@ -156,28 +154,21 @@
       function clearOnboarding() {
         $onboarding.innerHTML = "";
       }
-      function sleep(ms) {
-        return new Promise((r) => setTimeout(r, ms));
-      }
-
-      // Aguarda Connect.js carregar (window.StripeConnect existir)
-      async function initConnectInstance(fetchClientSecretFn) {
-        const instance = await window.StripeConnect.init({
-          publishableKey: PUBLISHABLE_KEY,
-          fetchClientSecret: async () => {
-            const { clientSecret } = await fetchClientSecretFn();
-            return clientSecret;
-          },
-          appearance: { variables: { colorPrimary: "#111827" } },
-        });
-        return instance;
-      }
 
       // Cria/recupera Account Session no backend e retorna client_secret + acct
-      async function getClientSecret(acctId = null, email = null) {
+      async function createAccountSession(acctId = null, email = null) {
         const body = {};
-        if (acctId) body.account_id = acctId;
-        if (email) body.email = email;
+        
+        // Se tem email, nunca enviar account_id
+        if (email) {
+          body.email = email;
+          console.log('DEBUG: Enviando apenas email:', email);
+        } else if (acctId) {
+          body.account_id = acctId;
+          console.log('DEBUG: Enviando apenas account_id:', acctId);
+        }
+        
+        console.log('DEBUG: Body sendo enviado:', JSON.stringify(body));
 
         const res = await fetch("./create_account_session.php", {
           method: "POST",
@@ -185,58 +176,25 @@
           body: JSON.stringify(body),
         });
         const data = await res.json();
-        if (!data.success)
-          throw new Error(data.error || "Falha ao criar Account Session");
-        if (!acctId) $accountId.value = data.account_id; // guarda o acct_ gerado
-        return { clientSecret: data.client_secret, accountId: data.account_id };
+        if (!data.success) throw new Error((data.details && data.details.message) || data.error || "Falha ao criar Account Session");
+        const out = data.data || {};
+        return { clientSecret: out.client_secret, accountId: out.account_id };
       }
 
-      async function initConnectInstance(fetchClientSecretFn, acctId) {
-        // Aguarda o Stripe carregar
-        if (typeof Stripe === "undefined") {
-          throw new Error("Stripe não carregou. Verifique sua conexão.");
+      // Wrapper: se a conta não existir, tenta criar uma nova usando o email
+      async function createAccountSessionWithFallback(acctId = null, email = null) {
+        try {
+          return await createAccountSession(acctId, email);
+        } catch (err) {
+          const msg = (err && err.message) ? String(err.message) : '';
+          if (acctId && email && msg.includes('No such account')) {
+            // Tentativa automática: criar nova conta ignorando o acct fornecido
+            return await createAccountSession(null, email);
+          }
+          throw err;
         }
-
-        const { clientSecret } = await fetchClientSecretFn();
-
-        // Para Connect embedded onboarding, usamos a API correta
-        // Verifica se embeddedOnboarding existe, senão usa uma abordagem alternativa
-        let connectOnboarding;
-        if (typeof stripe.embeddedOnboarding === "function") {
-          connectOnboarding = stripe.embeddedOnboarding({
-            clientSecret: clientSecret,
-            onReady: () => {
-              console.log("Embedded onboarding ready");
-            },
-            onExit: (ev) => {
-              console.log("Embedded onboarding exit", ev);
-            },
-            onComplete: (ev) => {
-              console.log("Embedded onboarding complete", ev);
-            },
-          });
-        } else {
-          // Fallback: cria um link de onboarding
-          const onboardingLink = await createOnboardingLink(acctId);
-          window.open(onboardingLink, "_blank");
-          throw new Error(
-            "API de embedded onboarding não disponível. Abrindo link de onboarding em nova aba..."
-          );
-        }
-
-        return connectOnboarding;
       }
 
-      async function mountOnboarding(fetchClientSecretFn, acctId) {
-        clearOnboarding();
-        const connectOnboarding = await initConnectInstance(
-          fetchClientSecretFn,
-          acctId
-        );
-
-        // Monta o componente
-        connectOnboarding.mount("#onboarding");
-      }
 
       async function fetchAccountStatus(acct) {
         const res = await fetch("./account_status.php", {
@@ -245,9 +203,8 @@
           body: JSON.stringify({ account_id: acct }),
         });
         const data = await res.json();
-        if (!data.success)
-          throw new Error(data.error || "Falha ao consultar status");
-        return data;
+        if (!data.success) throw new Error((data.details && data.details.message) || data.error || "Falha ao consultar status");
+        return data.data;
       }
 
       async function createOnboardingLink(acctId) {
@@ -257,27 +214,80 @@
           body: JSON.stringify({ account_id: acctId }),
         });
         const data = await res.json();
-        if (!data.success)
-          throw new Error(data.error || "Falha ao criar link de onboarding");
-        return data.url;
+        if (!data.success) throw new Error((data.details && data.details.message) || data.error || "Falha ao criar link de onboarding");
+        return (data.data || {}).url;
       }
+
+
+      // Trata retorno/refresh do Stripe (query params)
+      (function handleReturnParams() {
+        const params = new URLSearchParams(window.location.search);
+        const status = params.get('status');
+        const acct = params.get('account');
+        if (acct) {
+          $accountId.value = acct;
+        }
+        if (status === 'return') {
+          setStatus('Você retornou do onboarding. Verificando status…');
+          if (acct) {
+            fetchAccountStatus(acct)
+              .then((st) => {
+                setStatus('Onboarding concluído (ou em revisão). Status abaixo.');
+                showAccountJson(st);
+              })
+              .catch((e) => setStatus('Falha ao consultar status: ' + e.message));
+          }
+        } else if (status === 'refresh') {
+          setStatus('Sessão expirada/cancelada. Você pode reabrir o onboarding.');
+        }
+      })();
 
       // Botões
       $start.addEventListener("click", async () => {
         try {
           setStatus("criando account session…");
-          const acctInput = $accountId.value.trim() || null;
           const email = $email.value.trim() || null;
+          let acctInput = ($accountId.value || '').trim() || null;
 
-          const { accountId } = await getClientSecret(acctInput, email);
-          setStatus(`Conta: ${accountId} — montando componente…`);
+          // DEBUG: mostrar o que está sendo enviado
+          console.log('DEBUG Frontend - Email:', email, 'Account ID:', acctInput);
 
-          await mountOnboarding(
-            async () => await getClientSecret(accountId, null),
-            accountId
-          );
+          // Se tem email, sempre criar nova conta (ignorar account_id)
+          if (email) {
+            $accountId.value = '';
+            acctInput = null;
+            console.log('DEBUG: Email fornecido, limpando account_id');
+          }
+
+          const { accountId, clientSecret } = await createAccountSession(acctInput, email);
+          $accountId.value = accountId;
+          
+          // Se é uma nova conta (não veio account_id), redireciona direto para onboarding
+          if (!acctInput && email) {
+            console.log('DEBUG: Criando onboarding link para nova conta:', accountId);
+            setStatus(`Conta: ${accountId} — criando link de onboarding…`);
+            try {
+              // Abrir onboarding (redirecionar para Stripe)
+              console.log('DEBUG: Chamando createOnboardingLink...');
+              const onboardingUrl = await createOnboardingLink(accountId);
+              console.log('DEBUG: URL do onboarding:', onboardingUrl);
+              setStatus(`Conta: ${accountId} — redirecionando para onboarding da Stripe...`);
+              window.location.href = onboardingUrl;
+              
+            } catch (e) {
+              console.error('DEBUG: Erro detalhado:', e);
+              setStatus(`Conta: ${accountId} — erro: ${e.message}`);
+            }
+          } else {
+            // Conta existente - redirecionar para onboarding externo
+            setStatus(`Conta: ${accountId} — criando link de onboarding…`);
+            const onboardingUrl = await createOnboardingLink(accountId);
+            setStatus(`Conta: ${accountId} — redirecionando para onboarding da Stripe...`);
+            window.location.href = onboardingUrl;
+          }
         } catch (e) {
-          setStatus("Erro: " + e.message);
+          // Superfície de erro mais clara
+          setStatus("Erro: " + (e?.message || 'Falha desconhecida'));
         }
       });
 
@@ -288,12 +298,10 @@
           return;
         }
         try {
-          setStatus("recriando account session…");
-          await mountOnboarding(
-            async () => await getClientSecret(acct, null),
-            acct
-          );
-          setStatus(`Conta: ${acct} — componente reaberto.`);
+          setStatus("criando link de onboarding…");
+          const url = await createOnboardingLink(acct);
+          setStatus(`Conta: ${acct} — abrindo onboarding em nova aba...`);
+          window.open(url, "_blank");
         } catch (e) {
           setStatus("Erro ao reabrir: " + e.message);
         }
@@ -315,51 +323,6 @@
         }
       });
 
-      $prefill.addEventListener("click", async () => {
-        const acct = $accountId.value.trim();
-        if (!acct) {
-          setStatus("Informe um Account ID (acct_...) para pré-preencher.");
-          return;
-        }
-        setStatus("pré-preenchendo dados básicos (PF)…");
-        try {
-          const res = await fetch("./prefill_account.php", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              account_id: acct,
-              business_profile: {
-                product_description:
-                  "Plataforma de consultorias especializadas",
-                url: "https://sua-plataforma.test",
-              },
-              individual: {
-                first_name: "Gustavo",
-                last_name: "Guarda",
-                email: $email.value.trim() || "expert+t1@example.com",
-                id_number: "000.000.001-91",
-                dob: { day: 1, month: 1, year: 1990 },
-                address: {
-                  line1: "Rua Teste 123",
-                  city: "Brasília",
-                  state: "DF",
-                  postal_code: "70000-000",
-                  country: "BR",
-                },
-              },
-            }),
-          });
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-          setStatus(
-            "Dados básicos enviados. Reabra o onboarding para completar documento e banco."
-          );
-          const st = await fetchAccountStatus(acct);
-          showAccountJson(st);
-        } catch (e) {
-          setStatus("Erro no pré-preenchimento: " + e.message);
-        }
-      });
 
       $copyAcct.addEventListener("click", async () => {
         const v = $accountId.value.trim();

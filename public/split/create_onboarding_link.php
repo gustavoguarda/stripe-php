@@ -1,8 +1,30 @@
 <?php
+declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 require_once __DIR__ . '/../../config.php';
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+
+function successResponse(array $data): void {
+  http_response_code(200);
+  echo json_encode([
+    'success' => true,
+    'data' => $data,
+    'timestamp' => date('c'),
+  ], JSON_UNESCAPED_UNICODE);
+}
+
+function errorResponse(string $message, int $code = 400, array $details = null): void {
+  http_response_code($code);
+  echo json_encode([
+    'success' => false,
+    'error' => $message,
+    'details' => $details,
+    'timestamp' => date('c'),
+  ], JSON_UNESCAPED_UNICODE);
+}
 
 try {
   \Stripe\Stripe::setApiKey(getenv('STRIPE_SECRET_KEY'));
@@ -11,23 +33,19 @@ try {
   $accountId = $payload['account_id'] ?? null;
 
   if (!$accountId) {
-    http_response_code(400);
-    echo json_encode(['error' => 'account_id é obrigatório']);
-    exit;
+    return errorResponse('account_id é obrigatório', 400);
   }
 
-  // URLs de retorno/refresh da sua POC
   $base = rtrim((getenv('APP_URL') ?: 'http://localhost:4242'), '/');
 
   $link = \Stripe\AccountLink::create([
     'account' => $accountId,
     'type' => 'account_onboarding',
-    'refresh_url' => $base . '/onboarding_refresh.html',
-    'return_url'  => $base . '/onboarding_return.html',
+    'refresh_url' => $base . '/split/embedded_onboarding.html?status=refresh&account=' . urlencode($accountId),
+    'return_url'  => $base . '/split/embedded_onboarding.html?status=return&account=' . urlencode($accountId),
   ]);
 
-  echo json_encode(['success' => true, 'onboarding_url' => $link->url]);
+  return successResponse(['url' => $link->url]);
 } catch (\Stripe\Exception\ApiErrorException $e) {
-  http_response_code(400);
-  echo json_encode(['error' => $e->getMessage()]);
+  return errorResponse('Stripe API error', 400, ['message' => $e->getMessage()]);
 }

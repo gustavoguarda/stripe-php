@@ -7,12 +7,13 @@ header('Content-Type: application/json');
 /*
 curl -s -X POST http://localhost:4242/split/delete_account.php \
   -H "Content-Type: application/json" \
-  -d '{"account_id":"acct_1S46f5JG2lgk5exl"}' | jq
+  -d '{"account_id":"acct_1S4u8RJ2c0CjK04l"}' | jq
 
-{
+RESULT:
+  {
   "success": true,
   "deleted": {
-    "id": "acct_1S46f5JG2lgk5exl",
+    "id": "acct_1S3pfxBz6CwkThAe",
     "object": "account",
     "deleted": true
   }
